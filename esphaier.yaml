@@ -1,32 +1,24 @@
 esphome:
-  name: haier
+  name: aire_acondicionat
   platform: ESP8266
-  board: d1_mini
+  board: esp01_1m
   includes:
     - Haier.h
-
 
 logger:
   level: DEBUG
   baud_rate: 0 #Important. You can't use serial port
   
-  
 wifi:
-  ssid: ""
-  password: ""
-
+  ssid: "xxx"
+  password: "xxx"
 
 # Enable Home Assistant API
 api:
-  password: ""
 
 ota:
-  password: ""
 
 
-
-  
-  
 climate:
   - platform: custom
     lambda: |-

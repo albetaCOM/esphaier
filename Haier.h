@@ -7,6 +7,7 @@
 #define HAIER_ESP_HAIER_H
 
 #include "esphome.h"
+#include <string>
 
 using namespace esphome;
 using namespace esphome::climate;
@@ -82,7 +83,9 @@ private:
     byte data[47];
  	byte poll[15] = {0xFF,0xFF,0x0A,0x40,0x00,0x00,0x00,0x00,0x00,0x01,0x4D,0x01,0x99,0xB3,0xB4};
     byte power_command[17]     = {0xFF,0xFF,0x0C,0x40,0x00,0x00,0x00,0x00,0x00,0x01,0x5D,0x01,0x00,0x01,0xAC,0xBD,0xFB};
-	byte set_point_command[25]   = {0xFF,0xFF,0x14,0x40,0x00,0x00,0x00,0x00,0x00,0x01,0x60,0x01,0x09,0x08,0x25,0x00,0x02,0x03,0x00,0x06,0x00,0x0C,0x03,0x0B,0x70};
+    byte power_on_command[17]  = {0xFF,0xFF,0x0C,0x40,0x00,0x00,0x00,0x00,0x00,0x01,0x5D,0x01,0x00,0x01,0xAC,0xBD,0xFB};
+    byte power_off_command[17] = {0xFF,0xFF,0x0C,0x40,0x00,0x00,0x00,0x00,0x00,0x01,0x5D,0x01,0x00,0x00,0xAB,0x7D,0x3A };
+	byte set_point_command[25] = {0xFF,0xFF,0x14,0x40,0x00,0x00,0x00,0x00,0x00,0x01,0x60,0x01,0x09,0x08,0x25,0x00,0x02,0x03,0x00,0x06,0x00,0x0C,0x03,0x0B,0x70};
 
 
 public:
@@ -100,8 +103,6 @@ public:
 
     void loop() override  {
         if (Serial.available() > 0) {
-			ESP_LOGD("loop", "Serial data available");
-       
 			if (Serial.read() != 255) return;
 			if (Serial.read() != 255) return;
 			
@@ -111,7 +112,6 @@ public:
             Serial.readBytes(data+2, sizeof(data)-2);
 
             readData();
-
 		}
     }
 
@@ -143,7 +143,7 @@ public:
 
 
         auto raw = getHex(data, sizeof(data));
-        ESP_LOGD("Haier", "Readed message: %s ", raw.c_str());
+        //ESP_LOGD("Haier", "Readed message: %s ", raw.c_str());
 
 
         byte check = data[CRC_OFFSET];
@@ -193,55 +193,78 @@ public:
 
 
     void control(const ClimateCall &call) override {
+        ESP_LOGD("Control", "Control call");
 
         if (call.get_mode().has_value()) {
-            switch (call.get_mode().value()) {
+        // User requested mode change
+            ClimateMode mode = *call.get_mode();
+        
+			ESP_LOGD("Control", "*call.get_mode() = %d", mode);
+			ESP_LOGD("Control", "call.get_mode().value = %d", call.get_mode().value());
+			
+            switch (mode) {
                 case CLIMATE_MODE_OFF:
-                    power_command[CTR_POWER_OFFSET] = CTR_POWER_OFF;
+                    //power_command[CTR_POWER_OFFSET] = CTR_POWER_OFF;
+					sendData(power_off_command, sizeof(power_off_command));
                     break;
                 case CLIMATE_MODE_AUTO:
-					power_command[CTR_POWER_OFFSET] = CTR_POWER_ON;
+					//power_command[CTR_POWER_OFFSET] = CTR_POWER_ON;0
+					sendData(power_on_command, sizeof(power_on_command));
 
                     //data[MODE_OFFSET] = MODE_SMART;
                     break;
                 case CLIMATE_MODE_HEAT:
-                    power_command[CTR_POWER_OFFSET] = CTR_POWER_ON;
+                    //power_command[CTR_POWER_OFFSET] = CTR_POWER_ON;
+					sendData(power_on_command, sizeof(power_on_command));
                     
 					//data[MODE_OFFSET] = MODE_HEAT;
                     break;
                 case CLIMATE_MODE_COOL:
-                    power_command[CTR_POWER_OFFSET] = CTR_POWER_ON;
+                    //power_command[CTR_POWER_OFFSET] = CTR_POWER_ON;
+					sendData(power_on_command, sizeof(power_on_command));
                     
 					//data[MODE_OFFSET] = MODE_COOL;
                     break;
             }
-			sendData(power_command, sizeof(power_command));
+            // Publish updated state
+            this->mode = mode;
+            this->publish_state();
 		}
-			
 		if (call.get_target_temperature().has_value()) {
-			set_point_command[CTR_SET_POINT] = (uint16) call.get_target_temperature().value() - 16;
+		    float temp = *call.get_target_temperature();
+			ESP_LOGD("Control", "*call.get_target_temperature() = %d", temp);
+			ESP_LOGD("Control", "call.get_target_temperature().value = %d", call.get_target_temperature().value());
+			set_point_command[CTR_SET_POINT] = temp - 16;
 			sendData(set_point_command, sizeof(set_point_command));
- 		}
+			
+			this->target_temperature = temp;
+            this->publish_state();
+		}
    }
 
 
     void sendData(byte * message, byte size) {
 
-        byte crc = getChecksum(message, size);
-        Serial.write(message, size-1);
-        Serial.write(crc);
+        word crc = getChecksum(message, size);
+//        Serial.write(message, size-1);
+//        Serial.write(crc);
+
+        Serial.write(message, size);
+        
+
 
         auto raw = getHex(message, size);
-        ESP_LOGD("Haier", "Sended message: %s ", raw.c_str());
+        ESP_LOGD("Haier", "Sended message: %s  - CRC: %X", raw.c_str(), crc);
 
     }
 
     String getHex(byte * message, byte size) {
 
+		
         String raw;
 
         for (int i=0; i < size; i++){
-            raw += "\n" + String(i) + "-" + String(message[i]);
+			raw += " " + String(message[i]);
 
         }
         raw.toUpperCase();
@@ -251,9 +274,9 @@ public:
 
     }
 
-    byte getChecksum(const byte * message, size_t size) {
-        byte position = size - 1;
-        byte crc = 0;
+    word getChecksum(const byte * message, size_t size) {
+        byte position = 3 + message[2];
+        word crc = 0;
 
         for (int i = 2; i < position; i++)
             crc += message[i];
