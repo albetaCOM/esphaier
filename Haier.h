@@ -17,12 +17,11 @@ using namespace esphome::climate;
 
 #define COMMAND_OFFSET       	17
 
-#define MODE_OFFSET 			23
-	#define MODE_SMART 			0
-	#define MODE_COOL 			1
-	#define MODE_HEAT 			2
-	#define MODE_ONLY_FAN 		3
+#define MODE_OFFSET 			13
 	#define MODE_DRY 			4
+	#define MODE_AUTO           2
+	#define MODE_COOL 			8
+	#define MODE_HEAT 			10
 
 	#define FAN_SPEED   		25
 	#define FAN_MIN     		2
@@ -55,7 +54,8 @@ using namespace esphome::climate;
 // Updated read offset
 #define SET_TEMPERATURE_OFFSET 12
 
-#define CRC_OFFSET 				45
+
+#define CRC_OFFSET(message)		(2 + message[2])
 
 // Control commands
 #define CTR_POWER_OFFSET		13
@@ -86,6 +86,7 @@ private:
     byte power_on_command[17]  = {0xFF,0xFF,0x0C,0x40,0x00,0x00,0x00,0x00,0x00,0x01,0x5D,0x01,0x00,0x01,0xAC,0xBD,0xFB};
     byte power_off_command[17] = {0xFF,0xFF,0x0C,0x40,0x00,0x00,0x00,0x00,0x00,0x01,0x5D,0x01,0x00,0x00,0xAB,0x7D,0x3A };
 	byte set_point_command[25] = {0xFF,0xFF,0x14,0x40,0x00,0x00,0x00,0x00,0x00,0x01,0x60,0x01,0x09,0x08,0x25,0x00,0x02,0x03,0x00,0x06,0x00,0x0C,0x03,0x0B,0x70};
+	byte set_point_command2[23] = {0xFF,0xFF,0x14,0x40,0x00,0x00,0x00,0x00,0x00,0x01,0x60,0x01,0x09,0x08,0x25,0x00,0x02,0x03,0x00,0x06,0x00,0x0C,0x03};
 
 
 public:
@@ -143,16 +144,13 @@ public:
 
 
         auto raw = getHex(data, sizeof(data));
-        //ESP_LOGD("Haier", "Readed message: %s ", raw.c_str());
+        ESP_LOGD("Haier", "Readed message: %s ", raw.c_str());
 
+        byte check = getChecksum(data, sizeof(data));
 
-        byte check = data[CRC_OFFSET];
-
-        getChecksum(data, sizeof(data));
-
-        if (check != data[CRC_OFFSET]) {
-            ESP_LOGW("Haier", "Invalid checksum");
-            return;
+        if (check != data[CRC_OFFSET(data)]) {
+            ESP_LOGW("Haier", "Invalid checksum (%d vs %d)", check, data[CRC_OFFSET(data)]);
+            //return;
         }
 
 
@@ -180,6 +178,8 @@ public:
                 case MODE_HEAT:
                     mode = CLIMATE_MODE_HEAT;
                     break;
+                case MODE_AUTO:
+                case MODE_DRY:
                 default:
                     mode = CLIMATE_MODE_AUTO;
             }
@@ -200,7 +200,6 @@ public:
             ClimateMode mode = *call.get_mode();
         
 			ESP_LOGD("Control", "*call.get_mode() = %d", mode);
-			ESP_LOGD("Control", "call.get_mode().value = %d", call.get_mode().value());
 			
             switch (mode) {
                 case CLIMATE_MODE_OFF:
@@ -232,10 +231,9 @@ public:
 		}
 		if (call.get_target_temperature().has_value()) {
 		    float temp = *call.get_target_temperature();
-			ESP_LOGD("Control", "*call.get_target_temperature() = %d", temp);
-			ESP_LOGD("Control", "call.get_target_temperature().value = %d", call.get_target_temperature().value());
-			set_point_command[CTR_SET_POINT] = temp - 16;
-			sendData(set_point_command, sizeof(set_point_command));
+			ESP_LOGD("Control", "*call.get_target_temperature() = %f", temp);
+			set_point_command2[CTR_SET_POINT] = (uint16) temp - 16;
+			sendData(set_point_command2, sizeof(set_point_command2));
 			
 			this->target_temperature = temp;
             this->publish_state();
@@ -244,11 +242,9 @@ public:
 
 
     void sendData(byte * message, byte size) {
-
-        word crc = getChecksum(message, size);
-//        Serial.write(message, size-1);
-//        Serial.write(crc);
-
+        byte crc_position = 2 + message[2];
+        byte crc = getChecksum(message, size);
+message[crc_position] = crc;
         Serial.write(message, size);
         
 
@@ -274,15 +270,19 @@ public:
 
     }
 
-    word getChecksum(const byte * message, size_t size) {
-        byte position = 3 + message[2];
-        word crc = 0;
+    byte getChecksum(const byte * message, size_t size) {
+        byte position = CRC_OFFSET(message);
+        byte crc = 0;
+        
+        if (size < (2 + position)) {
+        	ESP_LOGE("Control", "frame format error (size = %d vs length = %d)", size, message[2]);
+        	return 0;
+        }
 
         for (int i = 2; i < position; i++)
             crc += message[i];
 
         return crc;
-
     }
 
 
