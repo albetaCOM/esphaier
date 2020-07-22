@@ -18,8 +18,9 @@ using namespace esphome::climate;
 #define COMMAND_OFFSET       	17
 
 #define MODE_OFFSET 			13
-	#define MODE_DRY 			4
+    #define MODE_OFF            0
 	#define MODE_AUTO           2
+	#define MODE_DRY 			4
 	#define MODE_COOL 			8
 	#define MODE_HEAT 			10
 
@@ -62,9 +63,10 @@ using namespace esphome::climate;
 	#define CTR_POWER_ON		0x01
 	#define CTR_POWER_OFF		0x00
 	
-#define CTR_SET_POINT			12
+#define CTR_SET_POINT_OFFSET	12
+#define CTR_MODE_OFFSET			13
 
-
+#define POLY 0xa001
 
 
 // temperatures supported by AC system
@@ -83,10 +85,9 @@ private:
     byte data[47];
  	byte poll[15] = {0xFF,0xFF,0x0A,0x40,0x00,0x00,0x00,0x00,0x00,0x01,0x4D,0x01,0x99,0xB3,0xB4};
     byte power_command[17]     = {0xFF,0xFF,0x0C,0x40,0x00,0x00,0x00,0x00,0x00,0x01,0x5D,0x01,0x00,0x01,0xAC,0xBD,0xFB};
-    byte power_on_command[17]  = {0xFF,0xFF,0x0C,0x40,0x00,0x00,0x00,0x00,0x00,0x01,0x5D,0x01,0x00,0x01,0xAC,0xBD,0xFB};
-    byte power_off_command[17] = {0xFF,0xFF,0x0C,0x40,0x00,0x00,0x00,0x00,0x00,0x01,0x5D,0x01,0x00,0x00,0xAB,0x7D,0x3A };
+    //byte power_on_command[17]  = {0xFF,0xFF,0x0C,0x40,0x00,0x00,0x00,0x00,0x00,0x01,0x5D,0x01,0x00,0x01,0xAC,0xBD,0xFB};
+    //byte power_off_command[17] = {0xFF,0xFF,0x0C,0x40,0x00,0x00,0x00,0x00,0x00,0x01,0x5D,0x01,0x00,0x00,0xAB,0x7D,0x3A };
 	byte set_point_command[25] = {0xFF,0xFF,0x14,0x40,0x00,0x00,0x00,0x00,0x00,0x01,0x60,0x01,0x09,0x08,0x25,0x00,0x02,0x03,0x00,0x06,0x00,0x0C,0x03,0x0B,0x70};
-	byte set_point_command2[23] = {0xFF,0xFF,0x14,0x40,0x00,0x00,0x00,0x00,0x00,0x01,0x60,0x01,0x09,0x08,0x25,0x00,0x02,0x03,0x00,0x06,0x00,0x0C,0x03};
 
 
 public:
@@ -134,7 +135,7 @@ protected:
         traits.set_visual_max_temperature(MAX_SET_TEMPERATURE);
         traits.set_visual_temperature_step(1.0f);
         traits.set_supports_current_temperature(true);
-
+        //traits.set_supports_action(true);// Cal identificar el byte
         return traits;
     }
 
@@ -166,7 +167,7 @@ public:
         }
 
 
-        if (data[POWER_OFFSET] == POWER_OFF || data[POWER_OFFSET] == POWER_OFF_2) {
+        if (data[POWER_OFFSET] == POWER_OFF) {
             mode = CLIMATE_MODE_OFF;
 
         } else {
@@ -196,61 +197,72 @@ public:
         ESP_LOGD("Control", "Control call");
 
         if (call.get_mode().has_value()) {
-        // User requested mode change
-            ClimateMode mode = *call.get_mode();
+            // User requested mode change
+            ClimateMode new_mode = *call.get_mode();
         
-			ESP_LOGD("Control", "*call.get_mode() = %d", mode);
+			ESP_LOGD("Control", "*call.get_mode() = %d", new_mode);
 			
-            switch (mode) {
+            switch (new_mode) {
                 case CLIMATE_MODE_OFF:
-                    //power_command[CTR_POWER_OFFSET] = CTR_POWER_OFF;
-					sendData(power_off_command, sizeof(power_off_command));
+                    power_command[CTR_POWER_OFFSET] = CTR_POWER_OFF;
                     break;
                 case CLIMATE_MODE_AUTO:
-					//power_command[CTR_POWER_OFFSET] = CTR_POWER_ON;0
-					sendData(power_on_command, sizeof(power_on_command));
-
-                    //data[MODE_OFFSET] = MODE_SMART;
+					power_command[CTR_POWER_OFFSET] = CTR_POWER_ON;
+					set_point_command[CTR_MODE_OFFSET] = MODE_AUTO;
                     break;
                 case CLIMATE_MODE_HEAT:
-                    //power_command[CTR_POWER_OFFSET] = CTR_POWER_ON;
-					sendData(power_on_command, sizeof(power_on_command));
-                    
-					//data[MODE_OFFSET] = MODE_HEAT;
+                    power_command[CTR_POWER_OFFSET] = CTR_POWER_ON;
+					set_point_command[CTR_MODE_OFFSET] = MODE_HEAT;
                     break;
                 case CLIMATE_MODE_COOL:
-                    //power_command[CTR_POWER_OFFSET] = CTR_POWER_ON;
-					sendData(power_on_command, sizeof(power_on_command));
-                    
-					//data[MODE_OFFSET] = MODE_COOL;
+                    power_command[CTR_POWER_OFFSET] = CTR_POWER_ON;
+					set_point_command[CTR_MODE_OFFSET] = MODE_COOL;
                     break;
             }
+			
+//			if (new_mode == CLIMATE_MODE_OFF && new_mode != mode) {
+			    // Only if we go from on -> off
+//			    sendData(power_command, sizeof(power_command));  
+//			} else {
+			    // Send the mode
+    			sendData(set_point_command, sizeof(set_point_command)); 
+//			    if (mode == CLIMATE_MODE_OFF && new_mode != mode) {
+			        // It was off -> We have to power on the device
+					delay(1000);				
+    			    sendData(power_command, sizeof(power_command));  
+//			    }
+//			}
+			
             // Publish updated state
-            this->mode = mode;
+            mode = new_mode;
             this->publish_state();
 		}
 		if (call.get_target_temperature().has_value()) {
 		    float temp = *call.get_target_temperature();
 			ESP_LOGD("Control", "*call.get_target_temperature() = %f", temp);
-			set_point_command2[CTR_SET_POINT] = (uint16) temp - 16;
-			sendData(set_point_command2, sizeof(set_point_command2));
+			set_point_command[CTR_SET_POINT_OFFSET] = (uint16) temp - 16;
+			sendData(set_point_command, sizeof(set_point_command));
 			
-			this->target_temperature = temp;
+			target_temperature = temp;
             this->publish_state();
 		}
    }
 
 
     void sendData(byte * message, byte size) {
-        byte crc_position = 2 + message[2];
+        byte crc_offset = CRC_OFFSET(message);
         byte crc = getChecksum(message, size);
-message[crc_position] = crc;
-        Serial.write(message, size);
+        word crc_16 = crc16(0, &(message[2]), crc_offset-2);
         
+        // Updates the crc
+        message[crc_offset] = crc;
+        message[crc_offset+1] = (crc_16>>8)&0xFF;
+        message[crc_offset+2] = crc_16&0xFF;
 
+        Serial.write(message, size);
 
         auto raw = getHex(message, size);
-        ESP_LOGD("Haier", "Sended message: %s  - CRC: %X", raw.c_str(), crc);
+        ESP_LOGD("Haier", "Sended message: %s  - CRC: %X - CRC16: %X", raw.c_str(), crc, crc_16);
 
     }
 
@@ -274,7 +286,7 @@ message[crc_position] = crc;
         byte position = CRC_OFFSET(message);
         byte crc = 0;
         
-        if (size < (2 + position)) {
+        if (size < ( position)) {
         	ESP_LOGE("Control", "frame format error (size = %d vs length = %d)", size, message[2]);
         	return 0;
         }
@@ -286,6 +298,21 @@ message[crc_position] = crc;
     }
 
 
+    unsigned crc16(unsigned crc, unsigned char *buf, size_t len)
+    {
+        while (len--) {
+            crc ^= *buf++;
+            crc = crc & 1 ? (crc >> 1) ^ POLY : crc >> 1;
+            crc = crc & 1 ? (crc >> 1) ^ POLY : crc >> 1;
+            crc = crc & 1 ? (crc >> 1) ^ POLY : crc >> 1;
+            crc = crc & 1 ? (crc >> 1) ^ POLY : crc >> 1;
+            crc = crc & 1 ? (crc >> 1) ^ POLY : crc >> 1;
+            crc = crc & 1 ? (crc >> 1) ^ POLY : crc >> 1;
+            crc = crc & 1 ? (crc >> 1) ^ POLY : crc >> 1;
+            crc = crc & 1 ? (crc >> 1) ^ POLY : crc >> 1;
+        }
+        return crc;
+    }
 
 
 };
