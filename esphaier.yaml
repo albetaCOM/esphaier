@@ -7,7 +7,7 @@ esphome:
 
 logger:
   level: DEBUG
-  baud_rate: 0 #Important. You can't use serial port
+#  baud_rate: 0 #Important. You can't use serial port
   
 wifi:
   ssid: "xxx"

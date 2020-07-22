@@ -15,8 +15,6 @@ using namespace esphome::climate;
 // Updated read offset
 #define TEMPERATURE_OFFSET   	21
 
-#define COMMAND_OFFSET       	17
-
 #define MODE_OFFSET 			13
     #define MODE_OFF            0
 	#define MODE_AUTO           2
@@ -53,8 +51,10 @@ using namespace esphome::climate;
 	#define FRESH_OFF   		0
 
 // Updated read offset
-#define SET_TEMPERATURE_OFFSET 12
+#define SET_POINT_OFFSET 12
 
+#define COMMAND_OFFSET			9
+	#define RESPONSE_POLL		2
 
 #define CRC_OFFSET(message)		(2 + message[2])
 
@@ -82,7 +82,7 @@ class Haier : public Climate, public PollingComponent {
 private:
 
     byte lastCRC;
-    byte data[47];
+    byte status[47];
  	byte poll[15] = {0xFF,0xFF,0x0A,0x40,0x00,0x00,0x00,0x00,0x00,0x01,0x4D,0x01,0x99,0xB3,0xB4};
     byte power_command[17]     = {0xFF,0xFF,0x0C,0x40,0x00,0x00,0x00,0x00,0x00,0x01,0x5D,0x01,0x00,0x01,0xAC,0xBD,0xFB};
 	byte set_point_command[25] = {0xFF,0xFF,0x14,0x40,0x00,0x00,0x00,0x00,0x00,0x01,0x60,0x01,0x09,0x08,0x25,0x00,0x02,0x03,0x00,0x06,0x00,0x0C,0x03,0x0B,0x70};
@@ -102,6 +102,7 @@ public:
     }
 
     void loop() override  {
+		byte data[47];
         if (Serial.available() > 0) {
 			if (Serial.read() != 255) return;
 			if (Serial.read() != 255) return;
@@ -110,8 +111,13 @@ public:
 			data[1] = 255;
 
             Serial.readBytes(data+2, sizeof(data)-2);
-
-            readData();
+			
+			// If is a status response
+			if (data[COMMAND_OFFSET] == RESPONSE_POLL) {
+				// Update the status frame
+				memcpy(status, data, sizeof(status));
+				parseStatus();
+			}
 		}
     }
 
@@ -139,24 +145,24 @@ protected:
 
 public:
 
-    void readData() {
+    void parseStatus() {
 
 
-        auto raw = getHex(data, sizeof(data));
+        auto raw = getHex(status, sizeof(status));
         ESP_LOGD("Haier", "Readed message: %s ", raw.c_str());
 
-        byte check = getChecksum(data, sizeof(data));
+        byte check = getChecksum(status, sizeof(status));
 
-        if (check != data[CRC_OFFSET(data)]) {
-            ESP_LOGW("Haier", "Invalid checksum (%d vs %d)", check, data[CRC_OFFSET(data)]);
+        if (check != status[CRC_OFFSET(status)]) {
+            ESP_LOGW("Haier", "Invalid checksum (%d vs %d)", check, status[CRC_OFFSET(status)]);
             //return;
         }
 
 
         lastCRC = check;
 
-        current_temperature = data[TEMPERATURE_OFFSET] + 16;
-        target_temperature = data[SET_TEMPERATURE_OFFSET] + 16;
+        current_temperature = status[TEMPERATURE_OFFSET] + 16;
+        target_temperature = status[SET_POINT_OFFSET] + 16;
 
         if(current_temperature < MIN_VALID_INTERNAL_TEMP || current_temperature > MAX_VALID_INTERNAL_TEMP 
             || target_temperature < MIN_SET_TEMPERATURE || target_temperature > MAX_SET_TEMPERATURE){
@@ -165,12 +171,12 @@ public:
         }
 
 
-        if (data[POWER_OFFSET] == POWER_OFF) {
+        if (status[POWER_OFFSET] == POWER_OFF) {
             mode = CLIMATE_MODE_OFF;
 
         } else {
 
-            switch (data[MODE_OFFSET]) {
+            switch (status[MODE_OFFSET]) {
                 case MODE_COOL:
                     mode = CLIMATE_MODE_COOL;
                     break;
@@ -192,36 +198,54 @@ public:
 
 
     void control(const ClimateCall &call) override {
-        ESP_LOGD("Control", "Control call");
+        ClimateMode new_mode;
+		ESP_LOGD("Control", "Control call");
 
         if (call.get_mode().has_value()) {
             // User requested mode change
-            ClimateMode new_mode = *call.get_mode();
+            new_mode = *call.get_mode();
         
 			ESP_LOGD("Control", "*call.get_mode() = %d", new_mode);
 			
             switch (new_mode) {
                 case CLIMATE_MODE_OFF:
                     power_command[CTR_POWER_OFFSET] = CTR_POWER_OFF;
+					sendData(power_command, sizeof(power_command));  
                     break;
                 case CLIMATE_MODE_AUTO:
 					power_command[CTR_POWER_OFFSET] = CTR_POWER_ON;
 					set_point_command[CTR_MODE_OFFSET] = MODE_AUTO;
+					set_point_command[CTR_SET_POINT_OFFSET] = status[SET_POINT_OFFSET];
+					if (mode == CLIMATE_MODE_OFF) {
+						// if the current mode is off -> we need to power on
+						sendData(power_command, sizeof(power_command));  
+						delay(1000);				
+					}
+					sendData(set_point_command, sizeof(set_point_command)); 
                     break;
                 case CLIMATE_MODE_HEAT:
-                    power_command[CTR_POWER_OFFSET] = CTR_POWER_ON;
+					power_command[CTR_POWER_OFFSET] = CTR_POWER_ON;
 					set_point_command[CTR_MODE_OFFSET] = MODE_HEAT;
+					set_point_command[CTR_SET_POINT_OFFSET] = status[SET_POINT_OFFSET];
+					if (mode == CLIMATE_MODE_OFF) {
+						// if the current mode is off -> we need to power on
+						sendData(power_command, sizeof(power_command));  
+						delay(1000);				
+					}
+					sendData(set_point_command, sizeof(set_point_command)); 
                     break;
                 case CLIMATE_MODE_COOL:
-                    power_command[CTR_POWER_OFFSET] = CTR_POWER_ON;
+					power_command[CTR_POWER_OFFSET] = CTR_POWER_ON;
 					set_point_command[CTR_MODE_OFFSET] = MODE_COOL;
+					set_point_command[CTR_SET_POINT_OFFSET] = status[SET_POINT_OFFSET];
+					if (mode == CLIMATE_MODE_OFF) {
+						// if the current mode is off -> we need to power on
+						sendData(power_command, sizeof(power_command));  
+						delay(1000);				
+					}
+					sendData(set_point_command, sizeof(set_point_command)); 
                     break;
             }
-			
-    		sendData(set_point_command, sizeof(set_point_command)); 
-			delay(1000);				
-		    sendData(power_command, sizeof(power_command));  
-
             // Publish updated state
             mode = new_mode;
             this->publish_state();
