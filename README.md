@@ -22,6 +22,6 @@
  
   # Known issues
  
-- The current temperature is not well reported. It always report 28ºC
+- ~~The current temperature is not well reported. It always report 28ºC~~ -> Thanks to @instalator this issue is solved.
 
 - When setting the mode to Cool through the remote control it is getting as it is in auto instead of cool.
