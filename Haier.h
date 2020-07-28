@@ -13,7 +13,7 @@ using namespace esphome;
 using namespace esphome::climate;
 
 // Updated read offset
-#define TEMPERATURE_OFFSET   	21
+#define TEMPERATURE_OFFSET   	22
 
 #define MODE_OFFSET 			13
     #define MODE_OFF            0
@@ -161,7 +161,7 @@ public:
 
         lastCRC = check;
 
-        current_temperature = status[TEMPERATURE_OFFSET] + 16;
+        current_temperature = status[TEMPERATURE_OFFSET]/2;
         target_temperature = status[SET_POINT_OFFSET] + 16;
 
         if(current_temperature < MIN_VALID_INTERNAL_TEMP || current_temperature > MAX_VALID_INTERNAL_TEMP 
